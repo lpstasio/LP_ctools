@@ -285,7 +285,10 @@ int WinMain(HINSTANCE instance,
             ImGui::SetWindowSize(ImVec2((r32)global_width, (r32)global_height));
             ImGui::SetWindowPos(ImVec2(0, 0));
 
-            ImGui::Text("Hello");
+            ImGui::Columns(2);
+            ImGui::Text("Content");
+            ImGui::NextColumn();
+            ImGui::Text("List");
 
             ImGui::End();
 
