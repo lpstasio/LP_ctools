@@ -26,12 +26,12 @@
 #include "types.h"
 #include "memory.h"
 
-#define KB(value) ((value)*1000LL)
-#define MB(value) (KB(value)*1000LL)
-#define GB(value) (MB(value)*1000LL)
-#define KiB(value) ((value)*1024LL)
-#define MiB(value) (KB(value)*1024LL)
-#define GiB(value) (MB(value)*1024LL)
+#define KB(value)  ((u64)(  (value)*1000LL))
+#define MB(value)  ((u64)(KB(value)*1000LL))
+#define GB(value)  ((u64)(MB(value)*1000LL))
+#define KiB(value) ((u64)(  (value)*1024LL))
+#define MiB(value) ((u64)(KB(value)*1024LL))
+#define GiB(value) ((u64)(MB(value)*1024LL))
 
 struct Renderer
 {
@@ -44,10 +44,17 @@ struct Renderer
 
 global b32 global_running;
 global b32 global_error;
-global u32 global_width = 1280;
-global u32 global_height = 720;
+global u32 global_width = 800;
+global u32 global_height = 500;
 global Renderer *global_renderer;
 global ImGuiIO *io;
+
+inline void cat(char *src0, char *src1, char *dest)
+{
+    while (*src0)  *(dest++) = *(src0++);
+    while (*src1)  *(dest++) = *(src1++);
+    *dest = '\0';
+}
 
 inline void d3d11_resize_render_targets()
 {
@@ -76,6 +83,38 @@ inline void d3d11_resize_render_targets()
         viewport.MinDepth = 0.f;
         viewport.MaxDepth = 1.f;
         global_renderer->context->RSSetViewports(1, &viewport);
+    }
+}
+
+internal void read_entire_file(char *path, uint8_t *out_data, uint64_t *out_bytes_read)
+{
+    HANDLE file_handle = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0,
+                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+
+    if (file_handle != INVALID_HANDLE_VALUE)
+    {
+        uint32_t file_size = GetFileSize(file_handle, 0);
+        DWORD bytes_read;
+
+        if(ReadFile(file_handle, out_data, file_size, &bytes_read, 0))
+        {
+            *out_bytes_read = (uint32_t)bytes_read;
+        }
+        else
+        {
+            *out_bytes_read = 0;
+            DWORD error = GetLastError();
+            error = ERROR_IO_PENDING;
+            //throw_error("Unable to read file: %s\n", path);
+        }
+
+        CloseHandle(file_handle);
+    }
+    else
+    {
+        *out_bytes_read = 0;
+        //throw_error("Unable to open file: %s\n", path);
+        DWORD error = GetLastError();
     }
 }
 
@@ -203,7 +242,7 @@ int WinMain(HINSTANCE instance,
     {
         Memory memory = {};
         memory.size   = MiB(100);
-        memory.base   = VirtualAlloc(0, memory.size, MEM_COMMIT, PAGE_READWRITE);
+        memory.base   = VirtualAlloc(0, memory.size, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
 
         Assert(memory.base);
         if(memory.base)
@@ -213,6 +252,9 @@ int WinMain(HINSTANCE instance,
             WIN32_FIND_DATAA *files_found = push_array(&memory,
                                                        WIN32_FIND_DATAA,
                                                        MAX_FILES_IN_FOLDER);
+            // @note: files can be at most 1MB in size
+#define MAX_FILE_SIZE MB(1)
+            u8 *file_contents = push_array(&memory, u8, MAX_FILE_SIZE);
 
             global_running = true;
             global_error = false;
@@ -321,12 +363,13 @@ int WinMain(HINSTANCE instance,
                 r32 rgba[] = {color.x, color.y, color.z, 1.f};
                 d11_renderer.context->ClearRenderTargetView(d11_renderer.render_target_rgb, rgba);
 
-                ImGui::Begin("IziWallet", 0, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+                ImGui::Begin("TOOLS", 0, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
                 ImGui::SetWindowSize(ImVec2((r32)global_width, (r32)global_height));
                 ImGui::SetWindowPos(ImVec2(0, 0));
 
                 ImGui::Columns(2);
                 ImGui::Text("Content");
+                ImGui::InputTextMultiline("##contents", (char *)file_contents, MAX_FILE_SIZE, ImVec2(-FLT_MIN, -FLT_MIN), 0);
                 ImGui::NextColumn();
                 ImGui::Text("List");
                 for(u32 found_file_index = 0;
@@ -334,7 +377,16 @@ int WinMain(HINSTANCE instance,
                     ++found_file_index)
                 {
                     WIN32_FIND_DATAA *file = files_found + found_file_index;
-                    ImGui::Text(file->cFileName);
+                    if(ImGui::Button(file->cFileName))
+                    {
+                        u64 n_bytes_read = 0;
+                        char path[500];
+                        cat("in/", file->cFileName, path);
+                        SecureZeroMemory(file_contents, MAX_FILE_SIZE);
+                        read_entire_file(path, file_contents, &n_bytes_read);
+                        Assert(n_bytes_read);
+                    }
+
                 }
 
                 ImGui::End();
