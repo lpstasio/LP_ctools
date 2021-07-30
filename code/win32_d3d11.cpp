@@ -1,7 +1,3 @@
-// Dear ImGui: standalone example application for DirectX 9
-// If you are new to Dear ImGui, read documentation from the docs/ folder + read the top of imgui.cpp.
-// Read online: https://github.com/ocornut/imgui/tree/master/docs
-
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <memoryapi.h>
@@ -25,6 +21,7 @@
 
 #include "types.h"
 #include "memory.h"
+#include "lp_string.h"
 
 #define KB(value)  ((u64)(  (value)*1000LL))
 #define MB(value)  ((u64)(KB(value)*1000LL))
@@ -32,6 +29,8 @@
 #define KiB(value) ((u64)(  (value)*1024LL))
 #define MiB(value) ((u64)(KB(value)*1024LL))
 #define GiB(value) ((u64)(MB(value)*1024LL))
+
+#define MAX_FILENAME_LENGTH 512
 
 struct Renderer
 {
@@ -48,13 +47,6 @@ global u32 global_width = 800;
 global u32 global_height = 500;
 global Renderer *global_renderer;
 global ImGuiIO *io;
-
-inline void cat(char *src0, char *src1, char *dest)
-{
-    while (*src0)  *(dest++) = *(src0++);
-    while (*src1)  *(dest++) = *(src1++);
-    *dest = '\0';
-}
 
 inline void d3d11_resize_render_targets()
 {
@@ -86,33 +78,43 @@ inline void d3d11_resize_render_targets()
     }
 }
 
-internal void read_entire_file(char *path, uint8_t *out_data, uint64_t *out_bytes_read)
+struct Platform_File
 {
-    HANDLE file_handle = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0,
-                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    void *handle;
+    char  path[MAX_FILENAME_LENGTH];
+    u8   *data;
+    u32   buffer_size;
+    u32   used;
+};
 
-    if (file_handle != INVALID_HANDLE_VALUE)
+internal void platform_read_entire_file(char *path, Platform_File *file)
+{
+    file->handle = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, 0,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+
+    if (file->handle != INVALID_HANDLE_VALUE)
     {
-        uint32_t file_size = GetFileSize(file_handle, 0);
-        DWORD bytes_read;
+        u32 file_size = GetFileSize(file->handle, 0);
+        Assert(file_size <= file->buffer_size);
 
-        if(ReadFile(file_handle, out_data, file_size, &bytes_read, 0))
+        if(ReadFile(file->handle, file->data, file_size, (DWORD *)&file->used, 0))
         {
-            *out_bytes_read = (uint32_t)bytes_read;
+            file->used = (u32)file->used;
+            str_copy_unsafe(path, file->path);
         }
         else
         {
-            *out_bytes_read = 0;
-            DWORD error = GetLastError();
+            file->used = 0;
+            u32 error = GetLastError();
             error = ERROR_IO_PENDING;
             //throw_error("Unable to read file: %s\n", path);
         }
 
-        CloseHandle(file_handle);
+        CloseHandle(file->handle);
     }
     else
     {
-        *out_bytes_read = 0;
+        file->used = 0;
         //throw_error("Unable to open file: %s\n", path);
         DWORD error = GetLastError();
     }
@@ -238,6 +240,12 @@ int WinMain(HINSTANCE instance,
                                      WindowDimensions.bottom,
                                      0, 0, instance, 0);
 
+    char *s = "Str String 1 and String 2 and String 3 and Str";
+    char *s1 = "Str";
+    char *y = str_find_first(s, "String");
+    char *x = str_find_last(s, "String");
+    char *z = str_find_first(s1, "String");
+
     if(main_window)
     {
         Memory memory = {};
@@ -254,7 +262,9 @@ int WinMain(HINSTANCE instance,
                                                        MAX_FILES_IN_FOLDER);
             // @note: files can be at most 1MB in size
 #define MAX_FILE_SIZE MB(1)
-            u8 *file_contents = push_array(&memory, u8, MAX_FILE_SIZE);
+            Platform_File nc_file = {};
+            nc_file.buffer_size = MAX_FILE_SIZE;
+            nc_file.data        = push_array(&memory, u8, nc_file.buffer_size);
 
             global_running = true;
             global_error = false;
@@ -341,14 +351,14 @@ int WinMain(HINSTANCE instance,
                 char text_buffer[500] = {};
 
                 n_files_found = 0;
-                WIN32_FIND_DATAA *file = files_found + n_files_found;
-                HANDLE find_handle = FindFirstFileA("in/*.nc", file);
+                WIN32_FIND_DATAA *filename = files_found + n_files_found;
+                HANDLE find_handle = FindFirstFileA("in/*.nc", filename);
                 if(find_handle != INVALID_HANDLE_VALUE)
                 {
                     do {
                         n_files_found += 1;
-                        file = files_found + n_files_found;
-                    } while(FindNextFileA(find_handle, file));
+                        filename = files_found + n_files_found;
+                    } while(FindNextFileA(find_handle, filename));
 
                     FindClose(find_handle);
                 }
@@ -367,9 +377,14 @@ int WinMain(HINSTANCE instance,
                 ImGui::SetWindowSize(ImVec2((r32)global_width, (r32)global_height));
                 ImGui::SetWindowPos(ImVec2(0, 0));
 
+                local_persist b32 is_edited = 0;
                 ImGui::Columns(2);
-                ImGui::Text("Content");
-                ImGui::InputTextMultiline("##contents", (char *)file_contents, MAX_FILE_SIZE, ImVec2(-FLT_MIN, -FLT_MIN), 0);
+                if (is_edited)
+                    ImGui::Text("Content - edited");
+                else
+                    ImGui::Text("Content");
+                if(ImGui::InputTextMultiline("##contents", (char *)nc_file.data, nc_file.buffer_size, ImVec2(-FLT_MIN, -FLT_MIN), 0))
+                    is_edited = 1;
                 ImGui::NextColumn();
                 ImGui::Text("List");
                 for(u32 found_file_index = 0;
@@ -379,12 +394,12 @@ int WinMain(HINSTANCE instance,
                     WIN32_FIND_DATAA *file = files_found + found_file_index;
                     if(ImGui::Button(file->cFileName))
                     {
-                        u64 n_bytes_read = 0;
-                        char path[500];
-                        cat("in/", file->cFileName, path);
-                        SecureZeroMemory(file_contents, MAX_FILE_SIZE);
-                        read_entire_file(path, file_contents, &n_bytes_read);
-                        Assert(n_bytes_read);
+                        is_edited = 0;
+                        char path[MAX_FILENAME_LENGTH];
+                        str_cat_unsafe("in/", file->cFileName, path);
+                        SecureZeroMemory(nc_file.data, nc_file.buffer_size);
+                        platform_read_entire_file(path, &nc_file);
+                        Assert(nc_file.used);
                     }
 
                 }
