@@ -240,11 +240,8 @@ int WinMain(HINSTANCE instance,
                                      WindowDimensions.bottom,
                                      0, 0, instance, 0);
 
-    char *s = "Str String 1 and String 2 and String 3 and Str";
-    char *s1 = "Str";
-    char *y = str_find_first(s, "String");
-    char *x = str_find_last(s, "String");
-    char *z = str_find_first(s1, "String");
+    char s[500] = "Str String 1 is going to String 2 Str";
+    str_replace_first_unsafe(s, "String 1", "NotStrlonger");
 
     if(main_window)
     {
@@ -399,6 +396,8 @@ int WinMain(HINSTANCE instance,
                         str_cat_unsafe("in/", file->cFileName, path);
                         SecureZeroMemory(nc_file.data, nc_file.buffer_size);
                         platform_read_entire_file(path, &nc_file);
+
+
                         Assert(nc_file.used);
                     }
 
